@@ -431,6 +431,14 @@ h2::before{width:21px;height:21px;filter:none}
 .sheet h3::before,.sheet h3::after{width:15px;height:15px}
 @media(max-width:480px){.corner{width:150px;height:auto}.garland{max-width:88%}@keyframes cornerInS{from{opacity:0}to{opacity:.85}}}
 @media (prefers-reduced-motion: reduce){.corner.rise{opacity:.9}}
+
+.sync-line{align-items:center}
+.sync-state{display:inline-flex;align-items:center;gap:7px;font-size:12px;color:var(--ink-soft)}
+.sync-state::before{content:"";width:7px;height:7px;border-radius:50%;background:#8fb8a3}
+.js-sync.busy::before{background:var(--gold);animation:pulse 1.2s ease-in-out infinite}
+.js-sync.err::before{background:var(--danger)}
+.dsub .js-sync{display:inline}
+@keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
 </style>
 </head>
 <body>
@@ -589,15 +597,15 @@ h2::before{width:21px;height:21px;filter:none}
 
 <footer class="rise">
   <svg class="vine-divider" viewBox="0 2 420 42" aria-hidden="true"><path d="M10 36 C70 28 120 42 190 36" fill="none" stroke="#a9bec4" stroke-width="0.85" stroke-linecap="round"/><path d="M230 36 C300 42 350 28 410 36" fill="none" stroke="#a9bec4" stroke-width="0.85" stroke-linecap="round"/><path d="M10 36 L190 36 M230 36 L410 36" stroke="#d5dde2" stroke-width=".5"/><use href="#ivy" xlink:href="#ivy" transform="translate(62 32) rotate(-110) scale(0.55)"/><use href="#ivyL" xlink:href="#ivyL" transform="translate(120 38) rotate(-70) scale(0.5)"/><use href="#ivy" xlink:href="#ivy" transform="translate(300 38) rotate(110) scale(0.55)"/><use href="#ivyL" xlink:href="#ivyL" transform="translate(358 32) rotate(70) scale(0.5)"/><use href="#anise" xlink:href="#anise" transform="translate(14 36) scale(.5)"/><use href="#anise" xlink:href="#anise" transform="translate(406 36) scale(.5)"/><use href="#dew" xlink:href="#dew" transform="translate(150 41) scale(.5)"/><use href="#dew" xlink:href="#dew" transform="translate(270 41) scale(.5)"/><use href="#cat" xlink:href="#cat" transform="translate(207 36.6) scale(1.45)"/></svg>
-  <p>データはこの端末のブラウザに保存されます。<br>大切な記録なので、ときどき書き出して保管してください。</p>
+  <p>データはこの端末に保存され、Googleドライブと連携すると<br>iPhone・パソコンの間で自動で同期されます。ときどき書き出して控えると安心です。</p>
   <div class="backup">
     <button class="btn ghost small" id="exportBtn">データを書き出す</button>
     <button class="btn quiet small" id="importBtn">データを読み込む</button>
     <input type="file" id="importFile" accept="application/json,.json" hidden>
   </div>
-  <div class="backup" id="driveBackup" style="display:none;margin-top:10px">
-    <button class="btn ghost small" id="driveSave">ドライブにバックアップ</button>
-    <button class="btn quiet small" id="driveLoad">ドライブから復元</button>
+  <div class="backup sync-line" id="driveBackup" style="display:none;margin-top:14px">
+    <span class="sync-state js-sync"></span>
+    <button class="btn ghost small" id="syncBtn">いま同期する</button>
   </div>
   <div class="signature">ENKA TSUMUGI</div>
 </footer>
@@ -888,7 +896,7 @@ function doPost(e) {
 <script>
 (function(){
   var KEY = 'enkatsumugi_tsumugicho_v1';
-  var state = { works: [], tagsets: [], designs: [], materials: [], calc: {} };
+  var state = { works: [], tagsets: [], designs: [], materials: [], calc: {}, calcUpdated: 0, deleted: {} };
   var EMPTY_ART = '<svg class="mark" viewBox="4 6 112 34" aria-hidden="true"><path d="M10 30 C34 20 44 34 60 27 C76 20 86 34 110 30" fill="none" stroke="#a9bec4" stroke-width="0.8" stroke-linecap="round"/><use href="#ivy" xlink:href="#ivy" transform="translate(30 25) rotate(-115) scale(0.55)"/><use href="#ivyL" xlink:href="#ivyL" transform="translate(44 30) rotate(-60) scale(0.5)"/><use href="#ivy" xlink:href="#ivy" transform="translate(90 28) rotate(115) scale(0.55)"/><use href="#ivyL" xlink:href="#ivyL" transform="translate(76 25) rotate(60) scale(0.5)"/><use href="#dew" xlink:href="#dew" transform="translate(16 34) scale(.55)"/><use href="#dew" xlink:href="#dew" transform="translate(104 34) scale(.55)"/><use href="#gerb" xlink:href="#gerb" transform="translate(60 23) scale(1.25)"/></svg>';
 
   /* ---------- 保存 ---------- */
@@ -903,12 +911,15 @@ function doPost(e) {
         state.materials = arr(d.materials);
         state.designs = arr(d.designs);
         state.calc = d.calc && typeof d.calc === 'object' ? d.calc : {};
+        state.calcUpdated = +d.calcUpdated || 0;
+        state.deleted = d.deleted && typeof d.deleted === 'object' ? d.deleted : {};
       }
     }catch(e){ toast('保存データを読み込めませんでした'); }
   }
   function save(){
     try{ localStorage.setItem(KEY, JSON.stringify(state)); }
     catch(e){ toast('保存できませんでした。書き出しで控えてください'); }
+    scheduleSync();
   }
   function uid(){ return Date.now().toString(36) + Math.random().toString(36).slice(2,7); }
   function $(id){ return document.getElementById(id); }
@@ -1021,7 +1032,7 @@ function doPost(e) {
     if(b.dataset.del){
       var w = state.works.find(function(x){ return x.id === b.dataset.del; });
       if(w && confirm('「'+w.name+'」を削除しますか？')){
-        state.works = state.works.filter(function(x){ return x.id !== w.id; });
+        markDeleted(w.id); state.works = state.works.filter(function(x){ return x.id !== w.id; });
         save(); renderWorks(); toast('削除しました');
       }
     }
@@ -1173,7 +1184,7 @@ function doPost(e) {
     if(b.dataset.copyhash) copyText(s.tags.map(function(t){ return '#'+t; }).join(' '));
     if(b.dataset.edit) openTag(s);
     if(b.dataset.del && confirm('「'+s.name+'」を削除しますか？')){
-      state.tagsets = state.tagsets.filter(function(x){ return x.id !== s.id; });
+      markDeleted(s.id); state.tagsets = state.tagsets.filter(function(x){ return x.id !== s.id; });
       save(); renderTags(); toast('削除しました');
     }
   });
@@ -1319,7 +1330,7 @@ function doPost(e) {
     if(fullCache[d.id]) return Promise.resolve(fullCache[d.id]);
     var p = d.driveId
       ? driveCall({ action:'get', id: d.driveId }).then(function(j){ return new Blob([b64ToBuf(j.data)], { type: j.mimeType || d.fileType }); })
-      : fget(d.id).then(function(rec){ if(!rec) throw new Error('ファイルが見つかりません'); return recToBlob(rec); });
+      : fget(d.id).then(function(rec){ if(!rec) throw new Error('この図案のファイルはもう一方の端末にあります。その端末の図案帳で「ドライブへ移す」を押してください'); return recToBlob(rec); });
     return p.then(function(b){ fullCache[d.id] = b; return b; });
   }
 
@@ -1334,7 +1345,7 @@ function doPost(e) {
         '<button class="btn ghost small" data-drive="settings">連携する</button>';
     }else{
       bar.innerHTML = '<span class="dstate on">Googleドライブに保存中</span>' +
-        '<span class="dsub">' + esc(cfg.folderName || '') + '</span>' +
+        '<span class="dsub"><span class="js-sync">' + esc(syncLabel()) + '</span></span>' +
         (localOnes ? '<button class="btn small" data-drive="migrate">端末の図案 ' + localOnes + ' 件をドライブへ移す</button>' : '') +
         '<button class="btn quiet small" data-drive="settings">設定</button>';
     }
@@ -1575,7 +1586,7 @@ function doPost(e) {
         d.driveId ? driveCall({ action:'trash', id: d.driveId }).catch(noop) : null
       ]).then(function(){
         dropCache(d.id);
-        state.designs = state.designs.filter(function(x){ return x.id !== d.id; });
+        markDeleted(d.id); state.designs = state.designs.filter(function(x){ return x.id !== d.id; });
         save(); renderDesigns(); toast('削除しました');
       });
     }
@@ -1613,14 +1624,15 @@ function doPost(e) {
     driveCall({ action:'ping' }, { url: url, key: key }).then(function(j){
       setDriveCfg({ url: url, key: key, folderName: j.folderName, folderUrl: j.folderUrl });
       closeModal('driveModal'); renderDesigns();
-      toast('Googleドライブにつながりました', 2500);
+      toast('Googleドライブにつながりました。記録を合わせています…', 3000);
+      syncNow().then(function(ok){ if(ok) toast('iPhone・パソコンの記録を合わせました', 2500); });
     }).catch(function(err){
       $('dr_status').textContent = 'つながりませんでした：' + err.message;
     }).then(function(){ btn.disabled = false; });
   });
   $('dr_off').addEventListener('click', function(){
     if(!confirm('連携をやめますか？\nドライブの図案は消えませんが、このアプリから原寸で開けなくなります。')) return;
-    setDriveCfg(null); closeModal('driveModal'); renderDesigns(); toast('連携をやめました');
+    setDriveCfg(null); clearTimeout(syncTimer); closeModal('driveModal'); renderDesigns(); toast('連携をやめました');
   });
 
   /* ---------- 素材・在庫帳 ---------- */
@@ -1726,14 +1738,14 @@ function doPost(e) {
     var m = state.materials.find(function(x){ return x.id === id; }); if(!m) return;
     if(b.dataset.inc || b.dataset.dec){
       var next = Math.round(((m.qty||0) + (b.dataset.inc ? 1 : -1)) * 100) / 100;
-      m.qty = Math.max(0, next);
+      m.qty = Math.max(0, next); m.updated = Date.now();
       save(); renderMats();
       if(b.dataset.dec && isLow(m)) toast('「'+m.name+'」が残りわずかです');
       return;
     }
     if(b.dataset.edit) openMat(m);
     if(b.dataset.del && confirm('「'+m.name+'」を削除しますか？')){
-      state.materials = state.materials.filter(function(x){ return x.id !== m.id; });
+      markDeleted(m.id); state.materials = state.materials.filter(function(x){ return x.id !== m.id; });
       save(); renderMats(); toast('削除しました');
     }
   });
@@ -1758,7 +1770,7 @@ function doPost(e) {
   }
   function applyWorkToCalc(){
     var w = state.works.find(function(x){ return x.id === $('calcWork').value; });
-    if(w && w.hours){ $('c_hours').value = w.hours; calc(); toast('制作時間を読み込みました'); }
+    if(w && w.hours){ $('c_hours').value = w.hours; state.calcUpdated = Date.now(); calc(); toast('制作時間を読み込みました'); }
   }
   $('calcWork').addEventListener('change', applyWorkToCalc);
 
@@ -1792,7 +1804,7 @@ function doPost(e) {
     var c = {}; calcFields.forEach(function(f){ c[f] = $('c_'+f).value; });
     state.calc = c; save();
   }
-  calcFields.forEach(function(f){ $('c_'+f).addEventListener('input', calc); });
+  calcFields.forEach(function(f){ $('c_'+f).addEventListener('input', function(){ state.calcUpdated = Date.now(); calc(); }); });
 
   /* ---------- バックアップ ---------- */
   function buildBackup(){
@@ -1826,9 +1838,18 @@ function doPost(e) {
         return Promise.all(jobs);
       }));
     }).then(function(){
-      state = { works: d.works, tagsets: d.tagsets, designs: designs, materials: arr(d.materials), calc: d.calc || {} };
+      var incoming = {}, del = {};
+      [d.works, d.tagsets, designs, arr(d.materials)].forEach(function(list){ list.forEach(function(r){ if(r && r.id) incoming[r.id] = 1; }); });
+      var now = Date.now();
+      COLS.forEach(function(c){ arr(state[c]).forEach(function(r){ if(r && r.id && !incoming[r.id]) del[r.id] = now; }); });
+      var nd = d.deleted && typeof d.deleted === 'object' ? d.deleted : {};
+      for(var k in nd){ if(!incoming[k]) del[k] = Math.max(del[k] || 0, nd[k]); }
+      applying = true;
+      state = { works: d.works, tagsets: d.tagsets, designs: designs, materials: arr(d.materials), calc: d.calc || {}, calcUpdated: now, deleted: del };
       picked = {};
       save(); restoreCalc(); renderAll();
+      applying = false;
+      if(driveCfg()) syncNow({ force: true });
     });
   }
   $('exportBtn').addEventListener('click', function(){
@@ -1852,25 +1873,149 @@ function doPost(e) {
     reader.readAsText(file);
     this.value = '';
   });
-  $('driveSave').addEventListener('click', function(){
-    var btn = this; btn.disabled = true;
-    toast('ドライブにバックアップしています…', 60000);
-    buildBackup().then(function(payload){
-      return driveCall({ action:'saveData', content: payload });
-    }).then(function(){ toast('ドライブにバックアップしました', 2500); }, function(err){ toast('バックアップできませんでした：' + err.message, 4000); })
-      .then(function(){ btn.disabled = false; });
-  });
-  $('driveLoad').addEventListener('click', function(){
-    if(!confirm('ドライブのバックアップで、いまのデータを置き換えます。よろしいですか？')) return;
-    var btn = this; btn.disabled = true;
-    toast('ドライブから読み込んでいます…', 60000);
-    driveCall({ action:'loadData' }).then(function(j){
-      return applyImport(JSON.parse(j.content)).then(function(){
-        var t = new Date(j.savedAt);
-        toast((t.getMonth()+1) + '月' + t.getDate() + '日のバックアップから戻しました', 3000);
+  /* ---------- 自動同期（Googleドライブ経由） ----------
+     それぞれの端末の記録と、ドライブ上の記録を「項目ごとに新しい方」で合わせる。
+     削除した項目は削除の印（deleted）を残し、もう一方の端末からも消えるようにする。 */
+  var COLS = ['works','tagsets','designs','materials'];
+  var SYNC_KEY = KEY + '_lastsync';
+  var syncTimer = null, syncing = false, syncAgain = false, applying = false, syncState = 'idle', syncErr = '', lastSync = 0;
+  try{ lastSync = +localStorage.getItem(SYNC_KEY) || 0; }catch(e){}
+
+  function markDeleted(id){ if(!state.deleted || typeof state.deleted !== 'object') state.deleted = {}; state.deleted[id] = Date.now(); }
+  function stamp(r){ return (r && (r.updated || r.created)) || 0; }
+  function sig(d){
+    var parts = COLS.map(function(c){ return arr(d && d[c]).map(function(r){ return r.id + ':' + stamp(r); }).sort().join('|'); });
+    parts.push(String((d && d.calcUpdated) || 0));
+    parts.push(Object.keys((d && d.deleted) || {}).sort().join('|'));
+    return parts.join('#');
+  }
+  function mergeData(local, remote){
+    var out = { deleted: {} }, fromRemote = {};
+    [local.deleted || {}, remote.deleted || {}].forEach(function(dm){
+      for(var k in dm){ if(!out.deleted[k] || dm[k] > out.deleted[k]) out.deleted[k] = dm[k]; }
+    });
+    var cutoff = Date.now() - 1000 * 60 * 60 * 24 * 180;
+    for(var k in out.deleted){ if(out.deleted[k] < cutoff) delete out.deleted[k]; }
+    COLS.forEach(function(c){
+      var map = {}, order = [];
+      arr(local[c]).forEach(function(r){ if(r && r.id && !map[r.id]){ map[r.id] = r; order.push(r.id); } });
+      arr(remote[c]).forEach(function(r){
+        if(!r || !r.id) return;
+        if(!map[r.id]){ map[r.id] = r; order.push(r.id); fromRemote[r.id] = true; }
+        else if(stamp(r) > stamp(map[r.id])){ map[r.id] = r; fromRemote[r.id] = true; }
       });
-    }).catch(function(err){ toast('復元できませんでした：' + err.message, 4000); })
-      .then(function(){ btn.disabled = false; });
+      out[c] = order.filter(function(id){
+        var del = out.deleted[id];
+        return !(del && del >= stamp(map[id]));
+      }).map(function(id){ return map[id]; });
+    });
+    var lc = local.calcUpdated || 0, rc = remote.calcUpdated || 0;
+    out.calc = (rc > lc ? remote.calc : local.calc) || {};
+    out.calcUpdated = Math.max(lc, rc);
+    return { data: out, fromRemote: fromRemote };
+  }
+
+  function hhmm(t){ var d = new Date(t); return d.getHours() + ':' + ('0' + d.getMinutes()).slice(-2); }
+  function syncLabel(){
+    if(!driveCfg()) return '';
+    if(syncState === 'busy') return '同期しています…';
+    if(syncState === 'err') return '同期できませんでした' + (syncErr ? '（' + syncErr + '）' : '');
+    if(lastSync) return 'iPhone・パソコンと同期済み ' + hhmm(lastSync);
+    return 'まだ同期していません';
+  }
+  function setSyncState(s){
+    syncState = s;
+    var label = syncLabel();
+    document.querySelectorAll('.js-sync').forEach(function(el){
+      el.textContent = label;
+      el.classList.toggle('busy', s === 'busy');
+      el.classList.toggle('err', s === 'err');
+    });
+  }
+  function scheduleSync(ms){
+    if(applying || !driveCfg()) return;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(function(){ syncNow(); }, ms || 2500);
+  }
+  function pushState(){
+    var thumbs = {};
+    return Promise.all(state.designs.map(function(d){
+      return tget(d.id).then(function(t){ if(t) thumbs[d.id] = t; }).catch(noop);
+    })).then(function(){
+      return driveCall({ action:'saveData', content: JSON.stringify({ app:'tsumugi-cho', version:5, sync:true, savedAt:new Date().toISOString(), data:state, thumbs:thumbs }) });
+    });
+  }
+  function syncNow(opts){
+    opts = opts || {};
+    if(!driveCfg()) return Promise.resolve(false);
+    if(syncing){ syncAgain = true; return Promise.resolve(false); }
+    syncing = true; clearTimeout(syncTimer); setSyncState('busy');
+    var remoteData = null, remoteThumbs = {};
+    return driveCall({ action:'loadData' }).then(function(j){
+      var obj = JSON.parse(j.content);
+      remoteData = obj.data || obj; remoteThumbs = obj.thumbs || {};
+    }, function(err){
+      if(err && err.message === DRIVE_ERR['no-backup']) return;
+      throw err;
+    }).then(function(){
+      var jobs = [], changed = false;
+      if(remoteData && !opts.force){
+        var before = sig(state), oldCalcAt = state.calcUpdated || 0;
+        var oldDesignIds = state.designs.map(function(d){ return d.id; });
+        var res = mergeData(state, remoteData), m = res.data;
+        if(sig(m) !== before){
+          applying = true; changed = true;
+          COLS.forEach(function(c){ state[c] = m[c]; });
+          state.deleted = m.deleted; state.calc = m.calc; state.calcUpdated = m.calcUpdated;
+          save();
+          var keep = {}; state.designs.forEach(function(d){ keep[d.id] = 1; });
+          oldDesignIds.forEach(function(id){
+            if(!keep[id]) jobs.push(Promise.all([fdel(id).catch(noop), tdel(id).catch(noop)]).then(function(){ dropCache(id); }));
+          });
+          if(state.calcUpdated > oldCalcAt) restoreCalc();
+          applying = false;
+        }
+        state.designs.forEach(function(d){
+          var t = remoteThumbs[d.id]; if(!t) return;
+          if(res.fromRemote[d.id]){
+            changed = true;
+            jobs.push(tput(d.id, t).then(function(){ dropCache(d.id); }).catch(noop));
+          }else{
+            jobs.push(tget(d.id).then(function(have){ if(!have){ changed = true; return tput(d.id, t).then(function(){ dropCache(d.id); }); } }).catch(noop));
+          }
+        });
+      }
+      return Promise.all(jobs).then(function(){
+        if(changed) renderAll(); else renderDriveBar();
+        if(opts.force || !remoteData || sig(remoteData) !== sig(state)) return pushState();
+      });
+    }).then(function(){
+      lastSync = Date.now(); syncErr = '';
+      try{ localStorage.setItem(SYNC_KEY, String(lastSync)); }catch(e){}
+      setSyncState('ok');
+      return true;
+    }, function(err){
+      applying = false;
+      syncErr = (err && err.message) || '';
+      setSyncState('err');
+      return false;
+    }).then(function(ok){
+      syncing = false;
+      if(syncAgain){ syncAgain = false; scheduleSync(600); }
+      return ok;
+    });
+  }
+  document.addEventListener('visibilitychange', function(){
+    if(!driveCfg()) return;
+    if(document.visibilityState === 'visible'){
+      if(Date.now() - lastSync > 15000) syncNow();
+    }else if(syncTimer){
+      syncNow();
+    }
+  });
+  window.addEventListener('online', function(){ if(driveCfg()) syncNow(); });
+  $('syncBtn').addEventListener('click', function(){
+    syncNow().then(function(ok){ toast(ok ? '同期しました' : '同期できませんでした。少し時間をおいてお試しください', ok ? 1800 : 3500); });
   });
 
   function restoreCalc(){
@@ -1941,6 +2086,7 @@ function doPost(e) {
   load();
   try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist(); }catch(e){}
   renderAll(); restoreCalc();
+  if(driveCfg()){ setSyncState('idle'); syncNow(); }
   try{ var last = sessionStorage.getItem(KEY + '_tab'); if(last) showTab(last); }catch(e){}
 })();
 </script>
