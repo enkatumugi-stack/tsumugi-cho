@@ -7,9 +7,6 @@
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="icon" type="image/png" href="apple-touch-icon.png">
 <meta name="apple-mobile-web-app-title" content="つむぎ帳">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="default">
 <title>つむぎ帳｜円華つむぎ</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -777,6 +774,10 @@ h2::before{width:21px;height:21px;filter:none}
     </details>
     <div class="field"><label>ウェブアプリのURL</label><input id="dr_url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="https://script.google.com/macros/s/…/exec"></div>
     <div class="field"><label>合言葉</label><input id="dr_key" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="実行ログに出た合言葉"><p class="hint">URLと合言葉はこの端末にだけ保存され、データの書き出しには含まれません。</p></div>
+    <div class="paste-box" id="dr_linkbox" style="display:none">
+      <button class="btn ghost" id="dr_link" type="button">ほかの端末用の連携リンクをコピー</button>
+      <p class="hint">このリンクをもう一方の端末のSafari（またはChrome）のアドレス欄に貼って開くと、URLと合言葉を入力しなくても連携できます。合言葉が含まれるので、人には送らないでください。</p>
+    </div>
     <p style="text-align:center;margin-bottom:12px"><a class="linkbtn" id="dr_folder" target="_blank" rel="noopener" style="display:none">ドライブの保存先フォルダを開く</a></p>
     <div class="sheet-actions">
       <button class="btn danger" id="dr_off" style="margin-right:auto">連携をやめる</button>
@@ -1632,6 +1633,7 @@ function doPost(e) {
     var fl = $('dr_folder');
     if(cfg && cfg.folderUrl){ fl.href = cfg.folderUrl; fl.style.display = ''; } else { fl.style.display = 'none'; }
     $('dr_howto').open = !cfg;
+    $('dr_linkbox').style.display = cfg ? '' : 'none';
     openModal('driveModal');
   }
   $('dr_copy').addEventListener('click', function(){ copyText($('gasCode').textContent.trim() + '\n'); });
@@ -1667,9 +1669,14 @@ function doPost(e) {
   });
   $('dr_test').addEventListener('click', function(){
     var url = $('dr_url').value.trim(), key = $('dr_key').value.trim();
-    if(!/^https:\/\/script\.google(usercontent)?\.com\//.test(url)){ $('dr_status').textContent = 'URLは https://script.google.com/ で始まるものを入れてください'; return; }
-    if(!key){ $('dr_status').textContent = '合言葉を入れてください'; return; }
-    var btn = this; btn.disabled = true;
+    function say(msg, ms){ $('dr_status').textContent = msg; $('dr_status').className = 'drive-status'; toast(msg, ms || 4000); }
+    url = url.replace(/\s+/g, '').replace(/\/macros\/u\/\d+\//, '/macros/');
+    key = key.replace(/[\s\u200b]+/g, '').replace(/[０-９ａ-ｆＡ-Ｆ]/g, function(c){ return String.fromCharCode(c.charCodeAt(0) - 0xFEE0); }).toLowerCase();
+    $('dr_url').value = url; $('dr_key').value = key;
+    if(!/^https:\/\/script\.google(usercontent)?\.com\//.test(url)){ say('URLは https://script.google.com/ で始まるものを入れてください'); return; }
+    if(!/\/exec$/.test(url)){ say('URLの最後が「/exec」になっているか確かめてください'); return; }
+    if(!key){ say('合言葉を入れてください'); return; }
+    var btn = this; btn.disabled = true; var label = btn.textContent; btn.textContent = '確かめています…';
     $('dr_status').textContent = '確かめています…'; $('dr_status').className = 'drive-status';
     driveCall({ action:'ping' }, { url: url, key: key }).then(function(j){
       setDriveCfg({ url: url, key: key, folderName: j.folderName, folderUrl: j.folderUrl });
@@ -1677,9 +1684,35 @@ function doPost(e) {
       toast('Googleドライブにつながりました。記録を合わせています…', 3000);
       syncNow().then(function(ok){ if(ok) toast('iPhone・パソコンの記録を合わせました', 2500); });
     }).catch(function(err){
-      $('dr_status').textContent = 'つながりませんでした：' + err.message;
-    }).then(function(){ btn.disabled = false; });
+      say('つながりませんでした：' + err.message, 5000);
+    }).then(function(){ btn.disabled = false; btn.textContent = label; });
   });
+  /* 連携用リンク：入力欄を使わずに、リンクを開くだけで連携できる */
+  function b64url(str){ return btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }
+  function unb64url(t){ var b = t.replace(/-/g, '+').replace(/_/g, '/'); while(b.length % 4) b += '='; return decodeURIComponent(escape(atob(b))); }
+  function connectLink(){
+    var cfg = driveCfg(); if(!cfg) return '';
+    return location.origin + location.pathname + '#connect=' + b64url(JSON.stringify({ u: cfg.url, k: cfg.key }));
+  }
+  $('dr_link').addEventListener('click', function(){ var l = connectLink(); if(l) copyText(l); });
+  function readConnectLink(){
+    var m = (location.hash || '').match(/^#connect=([A-Za-z0-9_\-]+)/);
+    if(!m) return false;
+    try{ history.replaceState(null, '', location.pathname + location.search); }catch(e){ location.hash = ''; }
+    var obj;
+    try{ obj = JSON.parse(unb64url(m[1])); }catch(e){ toast('連携用リンクを読み取れませんでした', 4000); return true; }
+    if(!obj || !obj.u || !obj.k){ toast('連携用リンクを読み取れませんでした', 4000); return true; }
+    toast('Googleドライブにつないでいます…', 60000);
+    driveCall({ action:'ping' }, { url: obj.u, key: obj.k }).then(function(j){
+      setDriveCfg({ url: obj.u, key: obj.k, folderName: j.folderName, folderUrl: j.folderUrl });
+      renderDesigns();
+      toast('Googleドライブにつながりました。記録を合わせています…', 60000);
+      return syncNow().then(function(ok){ toast(ok ? 'つながりました。iPhone・パソコンの記録を合わせました' : 'つながりました。記録の同期は少しあとで行います', 3500); });
+    }).catch(function(err){ toast('つながりませんでした：' + err.message, 5000); });
+    return true;
+  }
+  window.addEventListener('hashchange', readConnectLink);
+
   $('dr_off').addEventListener('click', function(){
     if(!confirm('連携をやめますか？\nドライブの図案は消えませんが、このアプリから原寸で開けなくなります。')) return;
     setDriveCfg(null); clearTimeout(syncTimer); closeModal('driveModal'); renderDesigns(); toast('連携をやめました');
@@ -2136,7 +2169,7 @@ function doPost(e) {
   load();
   try{ if(navigator.storage && navigator.storage.persist) navigator.storage.persist(); }catch(e){}
   renderAll(); restoreCalc();
-  if(driveCfg()){ setSyncState('idle'); syncNow(); }
+  if(!readConnectLink() && driveCfg()){ setSyncState('idle'); syncNow(); }
   try{ var last = sessionStorage.getItem(KEY + '_tab'); if(last) showTab(last); }catch(e){}
 })();
 </script>
