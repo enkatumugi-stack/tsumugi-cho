@@ -156,7 +156,7 @@ h2::after{content:"";flex:1;height:1px;background:linear-gradient(90deg,var(--si
 /* modal */
 .overlay{position:fixed;inset:0;background:rgba(58,70,80,.28);display:none;align-items:flex-end;justify-content:center;z-index:50}
 .overlay.open{display:flex}
-.sheet{background:var(--bg);width:100%;max-width:560px;max-height:92vh;overflow-y:auto;-webkit-overflow-scrolling:touch;border-radius:20px 20px 0 0;padding:24px 20px calc(24px + env(safe-area-inset-bottom));animation:up .28s ease}
+.sheet{background:var(--bg);width:100%;max-width:560px;max-height:92vh;overflow-y:auto;border-radius:20px 20px 0 0;padding:24px 20px calc(24px + env(safe-area-inset-bottom));animation:up .28s ease}
 @media(min-width:640px){.overlay{align-items:center}.sheet{border-radius:20px}}
 @keyframes up{from{transform:translateY(24px);opacity:0}to{transform:none;opacity:1}}
 .sheet h3{display:flex;align-items:center;justify-content:center;gap:10px;font-family:var(--mincho);font-weight:500;font-size:18px;letter-spacing:.14em;margin-bottom:18px}
@@ -445,6 +445,16 @@ h2::before{width:21px;height:21px;filter:none}
 .js-sync.err::before{background:var(--danger)}
 .dsub .js-sync{display:inline}
 @keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
+
+/* iPhoneのホーム画面アプリで「ペースト」が出やすいよう、入力の小窓ではぼかしを使わない */
+.overlay,.sheet{-webkit-backdrop-filter:none!important;backdrop-filter:none!important}
+.overlay{background:rgba(58,70,80,.3)}
+.sheet{background:#ffffff}
+.paste-box{border:1px dashed rgba(137,174,194,.7);border-radius:12px;padding:12px 14px;margin-bottom:16px;background:var(--sky-pale);text-align:center}
+.paste-box .btn{width:100%}
+.paste-box .hint{text-align:left;margin-top:8px;font-size:11px;color:var(--ink-soft)}
+.field input,.field textarea{-webkit-user-select:text;user-select:text}
+.toast{white-space:normal;width:max-content;max-width:calc(100% - 32px);text-align:center;line-height:1.6;border-radius:18px}
 </style>
 </head>
 <body>
@@ -746,6 +756,10 @@ h2::before{width:21px;height:21px;filter:none}
   <div class="sheet">
     <h3>Googleドライブ連携</h3>
     <p class="drive-status" id="dr_status"></p>
+    <div class="paste-box">
+      <button class="btn" id="dr_paste" type="button">コピーした内容を貼り付ける</button>
+      <p class="hint">URLと合言葉を一緒にコピーしても、ひとつずつコピーしても大丈夫です。押したあと「ペースト」の吹き出しが出たら、それをタップしてください。</p>
+    </div>
     <details class="howto" id="dr_howto">
       <summary>はじめての設定手順（パソコンで10分ほど）</summary>
       <ol class="steps">
@@ -1621,6 +1635,36 @@ function doPost(e) {
     openModal('driveModal');
   }
   $('dr_copy').addEventListener('click', function(){ copyText($('gasCode').textContent.trim() + '\n'); });
+  function fillDriveFrom(text){
+    text = String(text || '');
+    var got = [];
+    var um = text.match(/https:\/\/script\.google(?:usercontent)?\.com\/macros\/[^\s"'<>（）()]+?\/exec/);
+    if(um){ $('dr_url').value = um[0].replace(/\/macros\/u\/\d+\//, '/macros/'); got.push('URL'); }
+    var rest = um ? text.replace(um[0], ' ') : text;
+    var km = rest.match(/合言葉[\s：:]*([0-9a-f]{12})/i) || rest.match(/(?:^|[^0-9a-z])([0-9a-f]{12})(?![0-9a-z])/i);
+    if(km){ $('dr_key').value = km[1].toLowerCase(); got.push('合言葉'); }
+    return got;
+  }
+  $('dr_paste').addEventListener('click', function(){
+    if(!navigator.clipboard || !navigator.clipboard.readText){
+      toast('この画面では貼り付けボタンが使えません。欄をタップし、もう一度タップすると「ペースト」が出ます', 4500); return;
+    }
+    navigator.clipboard.readText().then(function(t){
+      var got = fillDriveFrom(t);
+      if(got.length === 2){ toast('URLと合言葉を入れました。「接続を確かめて保存」を押してください', 3500); }
+      else if(got.length === 1){ toast(got[0] + 'を入れました。もう一方もコピーして、もう一度押してください', 3500); }
+      else { toast('コピーした内容にURLや合言葉が見つかりませんでした', 3500); }
+    }, function(){
+      toast('貼り付けが許可されませんでした。もう一度押して「ペースト」をタップしてください', 4000);
+    });
+  });
+  ['dr_url','dr_key'].forEach(function(id){
+    $(id).addEventListener('paste', function(e){
+      var t = (e.clipboardData || window.clipboardData).getData('text');
+      if(t && /script\.google/.test(t) && /[0-9a-f]{12}/i.test(t.replace(/https:\S+/, ''))){ e.preventDefault(); fillDriveFrom(t); }
+    });
+    $(id).addEventListener('blur', function(){ if(id === 'dr_url' && /script\.google/.test(this.value)) fillDriveFrom(this.value); else this.value = this.value.trim(); });
+  });
   $('dr_test').addEventListener('click', function(){
     var url = $('dr_url').value.trim(), key = $('dr_key').value.trim();
     if(!/^https:\/\/script\.google(usercontent)?\.com\//.test(url)){ $('dr_status').textContent = 'URLは https://script.google.com/ で始まるものを入れてください'; return; }
